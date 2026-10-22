@@ -1,0 +1,11 @@
+GyroLock next revision - conservative EIS trajectory
+
+Changes:
+- Keep the existing camera, DIGITAL/OPTICAL, zoom, Motion Photo, flash and build workflow code.
+- Rework output stabilizer gating: stationary clips are detected using median and 90th-percentile angular-rate residuals after initial bias removal; stationary clips get a zero correction curve.
+- Raise the per-axis dead-band and reject low-energy gyro samples before integration to reduce noise accumulation.
+- Reduce trajectory correction gain and clamp, and smooth the correction curve more gently. This prioritizes natural movement over aggressive counter-motion and helps avoid left-right pumping.
+- Preview path and native Vulkan shader are unchanged in this revision; focus is the saved-video stabilization path.
+
+Validation:
+- ZIP structure checked. APK build and on-device camera tests have NOT been run in this environment. The change needs a GitHub Actions build and stationary/moving clip test.

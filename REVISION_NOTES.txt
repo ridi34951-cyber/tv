@@ -1,0 +1,79 @@
+GyroLock revision notes
+
+Changes in this source revision:
+- Added an iPhone-inspired centered circular shutter control and a 0.5× zoom control. It uses CameraX's reported minimum zoom ratio; actual ultrawide support depends on the phone exposing its ultrawide field of view through the selected back camera.
+- Zoom transitions now animate smoothly between the current and selected ratio (approximately 180–420 ms), rather than jumping instantly.
+- Opening video motion blur now fades out over 0.12 seconds. This is a video-renderer effect only; the still photo remains on the independent ImageCapture path and is not zoomed or blurred by this shader.
+- Video-only crop is ratio-specific: 3:4 uses a modest 1.07× safety crop; 9:16 uses about 1.015×. The still JPEG is not processed by this renderer.
+- Existing 3:4 and 9:16 Motion Photo output selection remains available.
+- Existing stabilization, photo/Motion Photo writing, and build workflow are otherwise retained.
+
+Important limitations:
+- This is Android source, not a prebuilt APK. It has not been compiled or tested on the target Samsung/Oppo device in this environment.
+- 0.5× is available only if CameraX reports a minimum zoom ratio below 1.0 for the bound back camera. Some phones expose ultrawide as a separate physical camera and may require explicit physical-camera selection; this UI cannot guarantee switching lenses on every device.
+- Zoom transition animation and source changes require on-device testing.
+
+
+Revision 3.0.18 (source edit)
+- Added a DIGITAL / OPTICAL lens-mode control.
+- DIGITAL mode tries to bind an independently exposed rear ultra-wide camera (detected from Camera2 focal-length metadata). When such a camera is available and the full use-case combination is supported, zoom is applied on that selected camera; the 0.5x UI maps to that camera's 1.0x zoom ratio.
+- OPTICAL mode uses CameraX's default rear logical camera, allowing the device HAL/CameraX to use optical multi-camera switching when supported.
+- If the vendor does not expose a separate ultra-wide camera, the app falls back to the default rear camera and explicitly warns that it cannot guarantee same-lens-only digital zoom.
+- Lens-mode changes stop and restart the rolling Motion Photo buffer before rebinding CameraX use cases, avoiding rebinding while a recording is active.
+- Zoom animation duration is extended for smoother transitions.
+- The project has not been built or device-tested in this environment; verify the GitHub Actions build and test lens behavior on the target phone. CameraX cannot guarantee identical physical-lens switching behavior across vendors.
+
+Revision 3.0.19 (stationary-jitter / flash recovery pass)
+- Gyro stabilization bias estimation now uses per-axis medians over the first 0.75 s instead of a short arithmetic mean, reducing contamination from a brief movement at recording start.
+- Increased gyro dead-band and added a near-rest vector gate before integration to avoid integrating small residual sensor noise into visible frame jitter. The live preview uses a corresponding near-rest gate.
+- In DIGITAL mode, the flash button remains available even if the separately bound ultra-wide reports no flash. Requesting flash then switches to OPTICAL if an available rear camera exposes a flash, and enables the photo flash on that camera. Flash remains unavailable when no rear camera reports flash support.
+- Not compiled or device-tested in this environment (Gradle is not installed here). Test still-photo flash in OPTICAL mode and record a stationary clip before judging stabilization; the gyro thresholds may need device-specific tuning.
+
+
+Revision 3.0.20 (conservative stationary safety gate)
+- Added a whole-clip gyro residual RMS check after initial bias removal. If motion energy is low, the output correction curve stays effectively zero instead of turning sensor noise into visible jitter.
+- Raised the preview dead-band and near-rest gate so small residual gyro noise cannot continuously translate/rotate the preview surface.
+- This deliberately favors a stable, minimally corrected stationary clip over aggressive correction when motion confidence is low. It still requires Android build and on-device testing; the threshold is conservative and may leave very subtle motion uncorrected.
+
+
+Revision 3.0.21 (Motion Photo timing / still / Cool pass)
+- The rolling video buffer now stops 1.5 seconds after the still frame is received. Since the buffer already contains at least 1.5 seconds before shutter, the target is a centered ~3-second clip rather than a clip ending shortly after shutter.
+- The still JPEG is kept unprocessed until the video clip is finalized. HDR and Cool photo processing now happens after capture of the full post-shutter window, so CPU processing cannot shorten the motion clip.
+- Dramatic Cool is also applied in the Vulkan video shader when enabled for the Motion Photo, so both still and embedded video receive the grade.
+- The rolling video quality selector now prefers SD input to leave more camera stream bandwidth for the still ImageCapture; final Motion Photo video is re-encoded to 720x960 or 720x1280. The actual still JPEG resolution remains device/CameraX stream-combination dependent and is reported in status for verification.
+- Removed the temporary torch AF-assist pulse immediately before still capture; CameraX ImageCapture FLASH_MODE_ON is now set immediately before capture so the flash pulse is not raced by torch shutdown.
+- Not compiled or device-tested in this environment. Verify flash, actual JPEG dimensions, centered motion marker, and Cool grade on the target phone.
+
+
+Revision 3.0.22 (shutter marker / flash assist / DIGITAL punch zoom / pose-safe stillness)
+- The shutter marker now prefers ImageProxy's camera sensor timestamp instead of delayed callback arrival time, and the rolling clip is stopped at shutter + 1.5 s. This reduces timing drift that could move the main photo toward the start of the clip. Actual centering still depends on the encoded prebuffer and device timestamp clock.
+- Flash mode lights the scene during AF/AE settling, turns torch off, then lets ImageCapture fire the synchronized still flash. Torch is also shut down on capture failure.
+- DIGITAL same-ultrawide transitions between 1x and 0.5x use a ~480 ms eased zoom with a small recorded end-pulse inspired by the supplied reference video. Other zoom transitions keep their smooth interpolation.
+- Stationary-clip detection uses robust median angular rate plus RMS rather than requiring the 90th percentile to be low, reducing pose-dependent false activation of stabilization corrections.
+- Source-level revision only; not compiled or tested on the target phone. Verify flash exposure, Motion Photo marker position, and the DIGITAL transition on-device.
+
+
+Revision 3.0.23 (high-resolution still + optical ultrawide routing)
+- ImageCapture ResolutionSelector now prefers supported 4:3 JPEG sizes >=8 MP. If the camera cannot bind that high-resolution still stream together with preview/video, camera startup retries using the unrestricted highest-available strategy. The actual captured dimensions remain device/session-dependent and are shown in the capture status.
+- In OPTICAL mode, tapping 0.5x now attempts to bind the separately exposed ultrawide camera when the logical rear camera cannot zoom below 1x; tapping 1x returns to the main rear camera. This rebind restarts only the rolling prebuffer before capture. It is intentionally blocked during a live Motion Photo/manual video so the clip is not cut. Seamless lens changes during a live clip require a device-exposed logical multi-camera.
+- Flash state is reapplied after optical physical-camera rebinding.
+- VersionCode 51 / versionName 3.0.23-highres-optical-wide.
+- Not device-tested; verify actual JPEG pixel dimensions and optical-lens behavior on target phone.
+
+
+GyroLock 3.0.24 - Flash assist / single still pulse
+- Keep the focus-assist torch on during AF/AE settling.
+- On Android 13+ devices that expose adjustable torch strength, request the lowest supported torch level for assist.
+- Before still capture, set ImageCapture flash mode ON, await CameraX torch-off completion, then allow a short transition before capture so the strong still flash is not merged into a continuous torch glow.
+- Devices without adjustable torch strength use the hardware default for focus assist. Final flash intensity and pulse behavior remain hardware/CameraX dependent.
+
+
+Revision 3.0.25 (true optical lens probe)
+- Improved separately exposed ultra-wide detection: camera metadata with multiple focal-length entries is no longer rejected; the shortest advertised focal length is used for classification.
+- Added Camera2 diagnostic logging for candidate rear camera IDs, focal lengths, and LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID when Android exposes it. Optical status reports the selected CameraX camera ID after a real rebind.
+- OPTICAL 0.5x uses a separately exposed ultra-wide camera ID when the logical rear camera cannot zoom below 1x; this is a real camera selection, not a digital crop.
+- Important limitation: on this CameraX rolling-buffer architecture, switching to a separately exposed camera requires stopping/restarting the rolling buffer. It cannot guarantee a gapless mixed-lens clip. If the device exposes a logical multi-camera with a zoom range spanning the ultra-wide lens, the HAL may switch physical sensors during zoom without rebind; the runtime physical-ID diagnostic can help verify this.
+- Not compiled or device-tested in this environment.
+
+
+Version 3.0.26 compile fix: qualified Context.CAMERA_SERVICE to android.content.Context.CAMERA_SERVICE and changed CameraManager.setTorchStrengthLevel invocation to reflective invocation to avoid compile-time SDK method resolution failure. Based on complete v3.0.25 project; all original project files retained. Build/device testing not performed.
